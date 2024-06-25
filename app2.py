@@ -7,9 +7,26 @@ import os
 from datetime import datetime, timedelta
 import hmac
 import hashlib
+import toml
 
 # YouTube Data APIのAPIキー
 API_KEY = 'AIzaSyDM2F_A0kreCYAONjzGq4RBvKTvOU3aII4'
+
+# ローカル環境用のシークレット読み取り
+def get_local_secret(key, default=None):
+    try:
+        with open('.streamlit/secrets.toml', 'r') as f:
+            secrets = toml.load(f)
+        return secrets['general'][key]
+    except Exception as e:
+        return default
+
+# パスワードを取得
+def get_password():
+    if 'password' in st.secrets['general']:
+        return st.secrets['general']['password']
+    else:
+        return get_local_secret('password', 'default_password')
 
 # APIリクエスト数のカウンター
 if 'api_requests' not in st.session_state:
@@ -109,7 +126,7 @@ def search_videos_with_paging(api_key, query, max_results_per_page=50, total_res
             ).execute()
             st.session_state.api_requests += 1
 
-            video_ids.extend([item['id']['videoId'] for item in search_response.get('items', [])])
+            video_ids.extend([item['id']['VideoId'] for item in search_response.get('items', [])])
             next_page_token = search_response.get('nextPageToken', None)
 
             progress = min(len(video_ids) / total_results, 1.0)
@@ -134,7 +151,7 @@ def check_password():
 
     def password_entered():
         """Checks whether a password entered by the user is correct."""
-        if hmac.compare_digest(st.session_state["password"], st.secrets["password"]):
+        if hmac.compare_digest(st.session_state["password"], get_password()):
             st.session_state["password_correct"] = True
             del st.session_state["password"]  # don't store password
         else:
@@ -163,7 +180,7 @@ if check_password():
     st.write('指定されたキーワードでYouTube動画を検索し、スポンサー情報が含まれている動画を表示します。')
 
     # 検索クエリの入力
-    query = st.text_input('検索ワードを入力してください', '魔神の食卓')
+    query = st.text_input('検索ワードを入力してください', '台湾旅行')
 
     # 検索件数の設定
     total_results = st.slider('検索件数', min_value=50, max_value=1000, value=200, step=50)
