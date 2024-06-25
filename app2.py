@@ -23,9 +23,9 @@ def get_local_secret(key, default=None):
 
 # パスワードを取得
 def get_password():
-    if 'password' in st.secrets['general']:
+    try:
         return st.secrets['general']['password']
-    else:
+    except KeyError:
         return get_local_secret('password', 'default_password')
 
 # APIリクエスト数のカウンター
@@ -126,7 +126,7 @@ def search_videos_with_paging(api_key, query, max_results_per_page=50, total_res
             ).execute()
             st.session_state.api_requests += 1
 
-            video_ids.extend([item['id']['VideoId'] for item in search_response.get('items', [])])
+            video_ids.extend([item['id']['videoId'] for item in search_response.get('items', [])])
             next_page_token = search_response.get('nextPageToken', None)
 
             progress = min(len(video_ids) / total_results, 1.0)
