@@ -7,6 +7,7 @@ import os
 from datetime import datetime, timedelta
 import hmac
 import toml
+import glob
 
 # YouTube Data APIのAPIキー
 API_KEY = 'AIzaSyDM2F_A0kreCYAONjzGq4RBvKTvOU3aII4'
@@ -60,7 +61,11 @@ exclude_patterns = [
     r'epidemicsound\.com',
     r'PIXTA',
     r'甘茶の音楽工房',
-    r'http://musmus\.main\.jp',
+    r'musmus\.main\.jp',
+    r'NoCopyrightSounds',
+    r'Music, Artlist License',
+    r'株式会社アイリング',
+    r'楽曲提供：.*',  # 楽曲提供で始まる全ての文字列を除外
 ]
 
 def extract_sponsors(description):
@@ -75,7 +80,17 @@ def extract_sponsors(description):
     
     # 除外パターンに一致するスポンサーを除外
     sponsors = [sponsor.strip() for sponsor in sponsors if sponsor.strip() and not any(re.search(ep, sponsor, re.IGNORECASE) for ep in exclude_patterns)]
+    
+    # URLのみの場合や、"Music"のみの場合は除外
+    sponsors = [sponsor for sponsor in sponsors if not sponsor.startswith('http') and not sponsor.startswith('www.') and sponsor.lower() != 'music']
+    
     return sponsors
+
+def clear_cache():
+    cache_files = glob.glob("cache_*.pkl")
+    for file in cache_files:
+        os.remove(file)
+    st.success("キャッシュがクリアされました。")
 
 def get_video_details(api_key, video_ids):
     youtube = build('youtube', 'v3', developerKey=api_key)
@@ -95,16 +110,15 @@ def get_video_details(api_key, video_ids):
                 title = item['snippet']['title']
                 sponsors_found = extract_sponsors(description)
                 
-                if sponsors_found:
-                    video_details.append({
-                        'title': title,
-                        'viewCount': item['statistics'].get('viewCount', 'N/A'),
-                        'publishedAt': item['snippet']['publishedAt'],
-                        'description': description,
-                        'thumbnailUrl': item['snippet']['thumbnails']['high']['url'],
-                        'url': f"https://www.youtube.com/watch?v={item['id']}",
-                        'sponsors': sponsors_found
-                    })
+                video_details.append({
+                    'title': title,
+                    'viewCount': item['statistics'].get('viewCount', 'N/A'),
+                    'publishedAt': item['snippet']['publishedAt'],
+                    'description': description,
+                    'thumbnailUrl': item['snippet']['thumbnails']['high']['url'],
+                    'url': f"https://www.youtube.com/watch?v={item['id']}",
+                    'sponsors': sponsors_found
+                })
         except HttpError as e:
             st.error(f"動画情報の取得中にエラーが発生しました: {str(e)}")
     
@@ -197,14 +211,25 @@ def check_password():
         # Password correct.
         return True
 
+def display_video_info(video, show_sponsors=True):
+    st.markdown(f"[{video['title']}]({video['url']})")
+    st.write(f"**アップロード日時**: {video['publishedAt']}")
+    if show_sponsors:
+        st.write(f"**視聴回数**: {video['viewCount']}")
+        st.image(video['thumbnailUrl'])
+        if video['sponsors']:
+            st.write(f"**スポンサー**: {', '.join(video['sponsors'])}")
+        with st.expander("詳細を表示"):
+            st.write(video['description'])
+
 if check_password():
-    st.title('YouTube スポンサー動画検索アプリ')
+    st.markdown("<h1 style='font-size: 24px;'>YouTube スポンサー動画検索アプリ</h1>", unsafe_allow_html=True)
     st.write('YouTubeの動画を検索し、スポンサー情報が含まれている動画を表示します。')
 
     search_type = st.radio("検索タイプを選択", ["キーワード検索", "カテゴリー検索", "トレンド"])
 
     if search_type == "キーワード検索":
-        query = st.text_input('検索ワードを入力してください', '台湾旅行')
+        query = st.text_input('検索ワードを入力してください', '韓国')
         category = "すべて"
     elif search_type == "カテゴリー検索":
         category = st.selectbox("カテゴリーを選択", YOUTUBE_CATEGORIES)
@@ -216,27 +241,50 @@ if check_password():
     total_results = st.slider('検索件数', min_value=50, max_value=1000, value=200, step=50)
     order = 'date' if search_type != "キーワード検索" else 'relevance'
 
-    if st.button('検索'):
+    # 検索ボタンとキャッシュクリアボタンを横に並べる
+    col1, col2 = st.columns(2)
+    with col1:
+        search_button = st.button('検索')
+    with col2:
+        cache_clear_button = st.button('キャッシュをクリア')
+
+    if cache_clear_button:
+        clear_cache()
+
+    if search_button:
         youtube = build('youtube', 'v3', developerKey=API_KEY)
         category_id = get_category_id(youtube, category) if category != "すべて" else ""
 
-        st.write(f'{"トレンド" if search_type == "トレンド" else query} でスポンサー付き動画を検索しています...')
+        st.write(f'{"トレンド" if search_type == "トレンド" else query} で動画を検索しています...')
         videos = search_videos_with_paging(API_KEY, query, total_results=total_results, order=order, video_category=category_id)
         
+        # 以下、既存の検索結果表示ロジック
         if videos:
-            st.write(f'スポンサー情報が含まれている動画が {len(videos)} 件見つかりました！')
-            for video in videos:
-                st.markdown(f"### {video['title']}")
-                st.write(f"**視聴回数**: {video['viewCount']}")
-                st.write(f"**アップロード日時**: {video['publishedAt']}")
-                st.image(video['thumbnailUrl'])
-                st.write(f"**URL**: [こちらをクリック]({video['url']})")
-                st.write(f"**スポンサー**: {', '.join(video['sponsors'])}")
-                
-                with st.expander("詳細を表示"):
-                    st.write(video['description'])
+            # 新着順に並べ替え
+            videos = sorted(videos, key=lambda x: x['publishedAt'], reverse=True)
+            
+            st.write(f'合計 {len(videos)} 件の動画が見つかりました。')
+            
+            # スポンサー情報がある動画とない動画を分ける
+            sponsored_videos = [v for v in videos if v['sponsors']]
+            non_sponsored_videos = [v for v in videos if not v['sponsors']]
+            
+            st.write(f'スポンサー情報が含まれている動画: {len(sponsored_videos)} 件')
+            st.write(f'スポンサー情報が含まれていない動画: {len(non_sponsored_videos)} 件')
+            
+            # スポンサー情報がある動画を表示
+            if sponsored_videos:
+                st.subheader("スポンサー情報が含まれている動画")
+                for video in sponsored_videos:
+                    display_video_info(video, show_sponsors=True)
+            
+            # スポンサー情報がない動画を表示（簡略化した情報）
+            if non_sponsored_videos:
+                st.subheader("スポンサー情報が含まれていない動画")
+                for video in non_sponsored_videos:
+                    display_video_info(video, show_sponsors=False)
         else:
-            st.write('スポンサー情報が含まれている動画が見つかりませんでした。')
+            st.write('動画が見つかりませんでした。')
 
     st.sidebar.write(f"APIリクエスト数: {st.session_state.api_requests} / 10000")
     st.write("実行コマンド: `streamlit run app3.py`")
